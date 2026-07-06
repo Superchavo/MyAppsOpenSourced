@@ -1,0 +1,31 @@
+#!/data/data/com.termux/files/usr/bin/bash
+
+# Estilo limpio sin emojis
+C_QUESTION="\033[38;5;214m"
+C_OK="\033[38;5;82m"
+C_TXT="\033[38;5;255m"
+RESET="\033[0m"
+
+# Pregunta interactiva para el Slot 1
+echo -ne "${C_QUESTION}Which program for Slot 1? ${RESET}"
+read -r prog1
+
+# Si el usuario da un enter vacío, por seguridad lo dejamos como vacío
+if [ -z "$prog1" ]; then
+    prog1="Not set"
+fi
+
+# Pregunta interactiva para el Slot 2
+echo -ne "${C_QUESTION}Which program for Slot 2? ${RESET}"
+read -r prog2
+
+if [ -z "$prog2" ]; then
+    prog2="Not set"
+fi
+
+# Guardar la configuración limpia
+mkdir -p ~/.config
+echo "$prog1" > ~/.config/bettersplash.conf
+echo "$prog2" >> ~/.config/bettersplash.conf
+
+echo -e "\n${C_OK}BetterSplash shortcuts updated! Next boot will monitor: ${C_TXT}$prog1${C_OK} and ${C_TXT}$prog2${RESET}"

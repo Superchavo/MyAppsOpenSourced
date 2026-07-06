@@ -1,0 +1,127 @@
+#!/data/data/com.termux/files/usr/bin/python3
+import datetime
+import os
+import shutil
+import json
+
+# Ultimate Vibrant ANSI Color Palette
+C_ART = "\033[1;38;5;255m"   # High-Intensity Metallic White for Tux
+C_BRK = "\033[38;5;242m"     # Medium Solid Gray for box frames
+C_TITLE = "\033[1;38;5;51m"   # Electric Neon Cyan for Section Headings
+C_LBL = "\033[1;38;5;214m"   # Vivid Amber Orange for Data Labels
+C_TXT = "\033[38;5;231m"     # Pure Crisp White for values
+C_TIME = "\033[1;38;5;46m"   # Radioactive Green for Clock
+C_RAM = "\033[1;38;5;39m"    # Deep Sky Blue for Memory metrics
+C_STORE = "\033[1;38;5;201m"  # Cyber Pink for Storage metrics
+C_DEVICE = "\033[1;38;5;135m" # Electric Purple for OS/Hardware specs
+RESET = "\033[0m"
+BOLD = "\033[1m"
+
+def get_ram_info():
+    try:
+        with open('/proc/meminfo', 'r') as f:
+            lines = f.readlines()
+        mem_total, mem_available = 0, 0
+        for line in lines:
+            if "MemTotal" in line:
+                mem_total = int(line.split()[1]) // 1024
+            if "MemAvailable" in line:
+                mem_available = int(line.split()[1]) // 1024
+        return mem_total, mem_available
+    except:
+        return 0, 0
+
+def get_storage_info():
+    try:
+        total, used, free = shutil.disk_usage(os.environ.get('PREFIX', '/data/data/com.termux/files/usr'))
+        return total // (2**30), used // (2**30), free // (2**30)
+    except:
+        return 0, 0, 0
+
+def get_battery_info():
+    try:
+        with os.popen('/data/data/com.termux/files/usr/bin/termux-battery-status') as pipe:
+            output = pipe.read()
+        if output.strip():
+            data = json.loads(output)
+            return f"{data['percentage']}% ({data['status']})"
+    except:
+        pass
+    return "N/A"
+
+def get_prop_device():
+    try:
+        with os.popen('getprop ro.product.manufacturer && getprop ro.product.model && getprop ro.build.version.release') as pipe:
+            props = [line.strip() for line in pipe.readlines()]
+        man = props[0].capitalize() if len(props) > 0 and props[0] else "Android"
+        mod = props[1] if len(props) > 1 and props[1] else "Device"
+        ver = props[2] if len(props) > 2 and props[2] else "N/A"
+        return man, mod, ver
+    except:
+        return "Unknown", "Android Device", "N/A"
+
+def make_progress_bar(used, total, width=15):
+    if total == 0: return "[----------]"
+    percent = used / total
+    filled_length = int(round(width * percent))
+    bar = "#" * filled_length + "-" * (width - filled_length)
+    return f"[{bar}] {int(percent*100)}%"
+
+def main():
+    now = datetime.datetime.now().strftime("%I:%M:%S %p - %b %d, %Y")
+    total_ram, avail_ram = get_ram_info()
+    total_store, used_store, free_store = get_storage_info()
+    battery = get_battery_info()
+    man, mod, rel = get_prop_device()
+    
+    # Tux Art
+    ascii_art = f"""{C_ART}                 .88888888:.
+               88888888.88888.
+             .8888888888888888.
+             888888888888888888
+             88' _`88'_  `88888
+             88 88 88 88  88888
+             88_88_::_88_:88888
+             88:::,::,:::::8888
+             88`:::::::::'`8888
+            .88  `::::'    8:88.
+           8888            `8:888.
+         .8888'             `888888.
+        .8888:..  .::.  ...:'8888888:.
+       .8888.'     :'     `'::`88:88888
+      .8888        '         `.888:8888.
+     888:8         .           888:88888
+   .888:88        .:           888:88888:
+   8888888.       ::           88:888888
+   `.::.888.      ::          .88888888
+  .::::::.888.    ::         :::`8888'.:.
+ ::::::::::.888   '         .::::::::::::
+ ::::::::::::.8    '      .:8::::::::::::.
+.::::::::::::::.        .:888:::::::::::::
+:::::::::::::::88:.__..:88888:::::::::::'
+ `'.:::::::::::88888888888.88:::::::::'
+       `':::_:' -- '' -'-' `':_::::'`{RESET}"""
+
+    print(ascii_art)
+    print(f"{C_BRK}┌────────────────────────────────────────────────────────┐{RESET}")
+    print(f"{C_BRK}│{RESET}  {C_TITLE}{BOLD}SYSTEM SUMMARY{RESET}                                         {C_BRK}│{RESET}")
+    print(f"{C_BRK}├────────────────────────────────────────────────────────┤{RESET}")
+    print(f"{C_BRK}│{RESET}  {C_LBL}Time:{RESET}         {C_TIME}{BOLD}{now}{RESET}")
+    print(f"{C_BRK}│{RESET}  {C_LBL}Hardware:{RESET}     {C_DEVICE}{man} {mod} (Android {rel}){RESET}")
+    print(f"{C_BRK}│{RESET}  {C_LBL}Battery:{RESET}      {C_TXT}{battery}{RESET}")
+    print(f"{C_BRK}│{RESET}  {C_LBL}RAM Status:{RESET}   {C_RAM}{avail_ram}MB Free{RESET} / {C_TXT}{total_ram}MB Total{RESET}")
+    print(f"{C_BRK}│{RESET}  {C_LBL}Storage:{RESET}      {C_STORE}{make_progress_bar(used_store, total_store)}{RESET} {C_TXT}({free_store}GB Free){RESET}")
+    print(f"{C_BRK}└────────────────────────────────────────────────────────┘{RESET}")
+
+    # Ejecucion directa para que si muestre las salidas de tus programas en pantalla
+    config_path = os.path.expanduser('~/.config/bettersplash.conf')
+    if os.path.exists(config_path):
+        with open(config_path, 'r') as f:
+            commands = [line.strip() for line in f.readlines() if line.strip()]
+        for cmd in commands:
+            if cmd and cmd not in ["Not set", "No configurado"]:
+                print() # Espaciado limpio para separar los outputs del recuadro
+                os.system(cmd)
+
+if __name__ == "__main__":
+    main()

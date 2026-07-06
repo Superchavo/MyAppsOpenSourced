@@ -1,0 +1,407 @@
+#!/usr/bin/env python3
+import tkinter as tk
+from tkinter import ttk, messagebox
+import os
+import json
+import random
+import getpass
+import math
+from datetime import datetime
+
+try:
+    from PIL import Image, ImageTk
+    PILLOW_AVAILABLE = True
+except ImportError:
+    PILLOW_AVAILABLE = False
+
+CONFIG_DIR = os.path.expanduser("~/.config/tdm-config")
+CONFIG_PATH = os.path.join(CONFIG_DIR, "tdmc.json")
+CUSTOM_SESSIONS_PATH = os.path.join(CONFIG_DIR, "custom_sessions.json")
+LOG_PATH = os.path.join(CONFIG_DIR, "session.log")
+RUN_SCRIPT_PATH = os.path.join(CONFIG_DIR, "run_session.sh")
+
+class TermuxDM:
+    def __init__(self, root):
+        self.root = root
+        self.root.title("tdm - Termux Display Manager (v5.3 - International)")
+        self.root.overrideredirect(True)
+        
+        self.sw, self.sh = self.root.winfo_screenwidth(), self.root.winfo_screenheight()
+        self.root.geometry(f"{self.sw}x{self.sh}+0+0")
+        
+        self.alpha = 0.0
+        self.root.attributes("-alpha", self.alpha)
+        
+        self.canvas = tk.Canvas(self.root, width=self.sw, height=self.sh, bg="#060e19", highlightthickness=0)
+        self.canvas.pack(fill="both", expand=True)
+        
+        self.bg_image = None
+        self.load_random_wallpaper(self.sw, self.sh)
+        
+        self.card_width, self.card_height = 620, 750
+        self.target_x = (self.sw // 2) - (self.card_width // 2)
+        self.target_y = (self.sh // 2) - (self.card_height // 2)
+        self.current_y = self.target_y + 120
+        
+        self.card = tk.Frame(self.root, bg="#081426", bd=0)
+        self.card.config(highlightbackground="#00ffcc", highlightcolor="#00d2ff", highlightthickness=2)
+        self.card.place(x=self.target_x, y=self.current_y, width=self.card_width, height=self.card_height)
+        
+        tk.Frame(self.card, bg="#00d2ff", height=6).pack(fill="x", side="top")
+        
+        self.glow_step = 0
+        self.chosen_command = None
+        
+        self.all_sessions = self.detect_xsessions()
+        self.session_names = self.load_saved_order(list(self.all_sessions.keys()))
+        self.build_ui()
+        
+        self.root.after(33, self.animate_entry)
+        self.root.after(66, self.animate_avatar_glow)
+
+    def load_random_wallpaper(self, sw, sh):
+        if not PILLOW_AVAILABLE: return
+        potential_dirs = ["/data/data/com.termux/files/usr/share/wallpapers", "/data/data/com.termux/files/usr/share/backgrounds"]
+        images = []
+        for directory in potential_dirs:
+            if os.path.exists(directory):
+                for root, _, files in os.walk(directory):
+                    for file in files:
+                        if file.lower().endswith(('.png', '.jpg', '.jpeg')):
+                            images.append(os.path.join(root, file))
+        if not images:
+            self.canvas.config(bg="#060e19")
+            return
+        selected_img_path = random.choice(images)
+        try:
+            img = Image.open(selected_img_path)
+            img = img.resize((sw, sh), Image.Resampling.LANCZOS)
+            self.bg_image = ImageTk.PhotoImage(img)
+            self.canvas.create_image(0, 0, image=self.bg_image, anchor="nw")
+        except Exception: pass
+
+    def change_wallpaper(self):
+        self.load_random_wallpaper(self.sw, self.sh)
+
+    def build_ui(self):
+        username = getpass.getuser()
+        current_time = datetime.now().strftime("%I:%M %p")
+        
+        tk.Label(self.card, text="TermuX11 Display Manager", font=("Segoe UI", 22, "bold"), fg="#ffffff", bg="#081426").pack(pady=(15, 5))
+        
+        self.avatar_canvas = tk.Canvas(self.card, width=100, height=100, bg="#081426", highlightthickness=0)
+        self.avatar_canvas.pack(pady=5)
+        
+        self.glow_ring = self.avatar_canvas.create_oval(5, 5, 95, 95, fill="#0f233d", outline="#00ffcc", width=4)
+        self.avatar_canvas.create_oval(38, 22, 62, 46, fill="#ffffff", outline="")
+        self.avatar_canvas.create_arc(20, 56, 80, 96, start=0, extent=180, fill="#ffffff", outline="")
+        
+        tk.Label(self.card, text=f"Welcome back, {username}  •  {current_time}", font=("Segoe UI", 12, "bold"), fg="#00cc99", bg="#081426").pack(pady=(0, 5))
+        tk.Label(self.card, text="SELECT AND PRIORITIZE SESSIONS", font=("Segoe UI", 9, "bold"), fg="#8a9ba8", bg="#081426").pack(pady=2)
+        
+        list_frame = tk.Frame(self.card, bg="#081426")
+        list_frame.pack(pady=5, padx=40, fill="x")
+        
+        self.listbox = tk.Listbox(list_frame, height=6, bg="#030a14", fg="white", selectbackground="#00ffcc", selectforeground="#081426", font=("Segoe UI", 12, "bold"), bd=0, highlightthickness=1, highlightbackground="#1f3a60")
+        self.listbox.pack(side="left", fill="both", expand=True)
+        self.listbox.bind("<<ListboxSelect>>", lambda e: self.avatar_canvas.itemconfig(self.glow_ring, outline="#ffffff", width=6))
+        
+        scrollbar = tk.Scrollbar(list_frame, orient="vertical", command=self.listbox.yview)
+        scrollbar.pack(side="right", fill="y")
+        self.listbox.config(yscrollcommand=scrollbar.set)
+        
+        for name in self.session_names: self.listbox.insert(tk.END, name)
+        if self.session_names: self.listbox.select_set(0)
+        
+        btn_frame = tk.Frame(self.card, bg="#081426")
+        btn_frame.pack(pady=5)
+        tk.Button(btn_frame, text=" ▲  MOVE UP ", font=("Segoe UI", 9, "bold"), bg="#102035", fg="#00d2ff", activebackground="#00ffcc", activeforeground="#081426", bd=0, relief="flat", cursor="hand2", command=self.move_up).pack(side="left", padx=10, ipady=4, ipadx=6)
+        tk.Button(btn_frame, text=" ▼  MOVE DOWN ", font=("Segoe UI", 9, "bold"), bg="#102035", fg="#00d2ff", activebackground="#00ffcc", activeforeground="#081426", bd=0, relief="flat", cursor="hand2", command=self.move_down).pack(side="left", padx=10, ipady=4, ipadx=6)
+        
+        mang_frame = tk.Frame(self.card, bg="#081426")
+        mang_frame.pack(pady=3)
+        tk.Button(mang_frame, text="➕ Add Custom DE", font=("Segoe UI", 9, "bold"), bg="#102035", fg="#00ffcc", activebackground="#0f233d", activeforeground="#00d2ff", relief="groove", bd=1, command=self.open_custom_de_window).pack(side="left", padx=5, ipadx=8, ipady=3)
+        tk.Button(mang_frame, text="❌ Delete Selected", font=("Segoe UI", 9, "bold"), bg="#201015", fg="#ff4d4d", activebackground="#330a11", activeforeground="#ffb3b3", relief="groove", bd=1, command=self.delete_selected_de).pack(side="right", padx=5, ipadx=8, ipady=3)
+        
+        tk.Button(self.card, text="▶ Next Wallpaper", font=("Segoe UI", 10, "bold"), bg="#1e2d4a", fg="#00ffcc", activebackground="#0f233d", activeforeground="#00d2ff", relief="groove", bd=1, command=self.change_wallpaper).pack(pady=(8, 8), ipadx=20, ipady=4)
+        
+        self.login_btn = tk.Button(self.card, text="Log In", font=("Segoe UI", 15, "bold"), bg="#00ffcc", fg="#081426", activebackground="#00d2ff", width=25, height=2, relief="raised", bd=2, command=self.animate_exit_sequence)
+        self.login_btn.pack(pady=5)
+
+    def open_custom_de_window(self):
+        top = tk.Toplevel(self.root)
+        top.title("Add Custom Desktop Environment")
+        top.transient(self.root)
+        top.overrideredirect(True)
+        tw, th = 550, 300
+        tx = self.target_x + (self.card_width // 2) - (tw // 2)
+        ty = self.target_y + (self.card_height // 2) - (th // 2)
+        top.geometry(f"{tw}x{th}+{tx}+{ty}")
+        top.focus_set()
+        top.grab_set()
+        
+        container = tk.Frame(top, bg="#081426", bd=2, highlightbackground="#00ffcc", highlightthickness=2)
+        container.pack(fill="both", expand=True)
+        tk.Label(container, text="ADD CUSTOM DESKTOP ENVIRONMENT", font=("Segoe UI", 14, "bold"), fg="#00ffcc", bg="#081426").pack(pady=(20, 15))
+        
+        tk.Label(container, text="Desktop Environment Name (e.g. LXQt, JWM):", font=("Segoe UI", 9, "bold"), fg="#ffffff", bg="#081426").pack(anchor="w", padx=40, pady=(5, 0))
+        entry_name = tk.Entry(container, font=("Segoe UI", 11), bg="#030a14", fg="#ffffff", insertbackground="#ffffff", highlightbackground="#1f3a60", highlightthickness=1, bd=0)
+        entry_name.pack(fill="x", padx=40, pady=(0, 15))
+        entry_name.focus_set()
+        
+        tk.Label(container, text="Terminal Executable Command (e.g. startlxqt):", font=("Segoe UI", 9, "bold"), fg="#ffffff", bg="#081426").pack(anchor="w", padx=40, pady=(5, 0))
+        entry_cmd = tk.Entry(container, font=("Segoe UI", 11), bg="#030a14", fg="#ffffff", insertbackground="#ffffff", highlightbackground="#1f3a60", highlightthickness=1, bd=0)
+        entry_cmd.pack(fill="x", padx=40, pady=(0, 20))
+        
+        def submit():
+            de_name = entry_name.get().strip()
+            de_cmd = entry_cmd.get().strip()
+            if not de_name or not de_cmd:
+                messagebox.showwarning("Warning", "All fields are required.", parent=container)
+                return
+            if de_name in self.all_sessions:
+                messagebox.showwarning("Warning", "This environment is already registered.", parent=container)
+                return
+                
+            os.makedirs(CONFIG_DIR, exist_ok=True)
+            custom_data = {}
+            if os.path.exists(CUSTOM_SESSIONS_PATH):
+                try:
+                    with open(CUSTOM_SESSIONS_PATH, "r") as f: custom_data = json.load(f)
+                except Exception: pass
+            
+            custom_data[de_name] = de_cmd
+            with open(CUSTOM_SESSIONS_PATH, "w") as f:
+                json.dump(custom_data, f, indent=4)
+                
+            try:
+                with open(CONFIG_PATH, "r") as f: config_data = json.load(f)
+            except Exception: config_data = {"session_order": []}
+                
+            if "session_order" not in config_data: config_data["session_order"] = []
+            config_data["session_order"].insert(0, de_name)
+            for s in self.all_sessions.keys():
+                if s not in config_data["session_order"]: config_data["session_order"].append(s)
+                    
+            with open(CONFIG_PATH, "w") as f: json.dump(config_data, f, indent=4)
+
+            self.all_sessions[de_name] = de_cmd
+            if de_name not in list(self.listbox.get(0, tk.END)): self.listbox.insert(0, de_name)
+            self.listbox.select_set(0)
+            messagebox.showinfo("Success", f"Environment '{de_name}' successfully registered.", parent=container)
+            top.destroy()
+            
+        def cancel(): top.destroy()
+
+        btn_frame = tk.Frame(container, bg="#081426")
+        btn_frame.pack(fill="x", padx=40)
+        tk.Button(btn_frame, text="Confirm", font=("Segoe UI", 10, "bold"), bg="#00ffcc", fg="#081426", activebackground="#00d2ff", bd=0, width=12, command=submit).pack(side="left", padx=(0, 10), ipady=5)
+        tk.Button(btn_frame, text="Cancel", font=("Segoe UI", 10, "bold"), bg="#1e2d4a", fg="#ffffff", activebackground="#0f233d", bd=0, width=12, command=cancel).pack(side="right", padx=(10, 0), ipady=5)
+
+    def delete_selected_de(self):
+        try:
+            selected_idx = self.listbox.curselection()[0]
+            selected_name = self.listbox.get(selected_idx)
+        except IndexError:
+            messagebox.showwarning("Warning", "Please select an environment from the list to delete.")
+            return
+
+        xsessions_dir = "/data/data/com.termux/files/usr/share/xsessions"
+        is_native = False
+        if os.path.exists(xsessions_dir):
+            for f in os.listdir(xsessions_dir):
+                if f.endswith(".desktop"):
+                    try:
+                        with open(os.path.join(xsessions_dir, f), "r") as file:
+                            for line in file:
+                                if line.startswith("Name=") and line.replace("Name=", "").strip() == selected_name:
+                                    is_native = True
+                                    break
+                    except Exception: pass
+                if is_native: break
+
+        if is_native or selected_name in ["KDE Plasma", "XFCE Desktop"]:
+            messagebox.showerror("Access Denied", f"Cannot delete '{selected_name}'. It is a native system Desktop Environment.")
+            return
+
+        confirm = messagebox.askyesno("Confirm Deletion", f"Are you sure you want to permanently remove '{selected_name}'?")
+        if not confirm: return
+
+        if selected_name in self.all_sessions: del self.all_sessions[selected_name]
+
+        if os.path.exists(CUSTOM_SESSIONS_PATH):
+            try:
+                with open(CUSTOM_SESSIONS_PATH, "r") as f: custom_json = json.load(f)
+                if selected_name in custom_json: del custom_json[selected_name]
+                with open(CUSTOM_SESSIONS_PATH, "w") as f: json.dump(custom_json, f, indent=4)
+            except Exception: pass
+
+        data = {"session_order": []}
+        try:
+            if os.path.exists(CONFIG_PATH):
+                with open(CONFIG_PATH, "r") as f: data = json.load(f)
+        except Exception: pass
+
+        if "session_order" in data and selected_name in data["session_order"]: data["session_order"].remove(selected_name)
+        try:
+            with open(CONFIG_PATH, "w") as f: json.dump(data, f, indent=4)
+        except Exception: pass
+
+        try:
+            self.listbox.delete(selected_idx)
+            if self.listbox.size() > 0: self.listbox.select_set(0)
+        except Exception: pass
+
+    def move_up(self):
+        try:
+            idx = self.listbox.curselection()[0]
+            if idx > 0:
+                txt = self.listbox.get(idx)
+                self.listbox.delete(idx)
+                self.listbox.insert(idx - 1, txt)
+                self.listbox.select_set(idx - 1)
+                self.save_current_order()
+        except IndexError: pass
+
+    def move_down(self):
+        try:
+            idx = self.listbox.curselection()[0]
+            if idx < self.listbox.size() - 1:
+                txt = self.listbox.get(idx)
+                self.listbox.delete(idx)
+                self.listbox.insert(idx + 1, txt)
+                self.listbox.select_set(idx + 1)
+                self.save_current_order()
+        except IndexError: pass
+
+    def save_current_order(self):
+        items = list(self.listbox.get(0, tk.END))
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        try:
+            with open(CONFIG_PATH, "w") as f: json.dump({"session_order": items}, f, indent=4)
+        except Exception: pass
+
+    def load_saved_order(self, detected_list):
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        if not os.path.exists(CONFIG_PATH):
+            try:
+                with open(CONFIG_PATH, "w") as f: json.dump({"session_order": detected_list}, f, indent=4)
+            except Exception: pass
+            return detected_list
+
+        try:
+            with open(CONFIG_PATH, "r") as f:
+                data = json.load(f)
+                saved_order = data.get("session_order", [])
+        except Exception: return detected_list
+            
+        ordered_list = []
+        for item in saved_order:
+            if item not in ordered_list: ordered_list.append(item)
+        for item in detected_list:
+            if item not in ordered_list: ordered_list.append(item)
+        return ordered_list
+
+    def animate_entry(self):
+        moved = False
+        if self.current_y > self.target_y:
+            distance = self.current_y - self.target_y
+            self.current_y -= max(1, int(distance * 0.18))
+            self.card.place(x=self.target_x, y=self.current_y)
+            moved = True
+        if self.alpha < 1.0:
+            self.alpha += 0.08
+            self.root.attributes("-alpha", min(1.0, self.alpha))
+            moved = True
+        if moved: self.root.after(33, self.animate_entry)
+
+    def animate_exit_sequence(self):
+        self.login_btn.config(bg="#9b59b6", fg="white")
+        self.fade_out_loop()
+
+    def fade_out_loop(self):
+        if self.alpha > 0.0:
+            self.alpha -= 0.15
+            self.root.attributes("-alpha", max(0.0, self.alpha))
+            self.current_y -= 15
+            self.card.place(x=self.target_x, y=self.current_y)
+            self.root.after(33, self.fade_out_loop)
+        else: 
+            self.launch_session()
+
+    def animate_avatar_glow(self):
+        self.glow_step += 0.2
+        pulse = (math.sin(self.glow_step) + 1.0) / 2.0
+        color = f"#00{int(150 + (105 * pulse)):02x}{int(255 - (85 * pulse)):02x}"
+        try:
+            self.avatar_canvas.itemconfig(self.glow_ring, outline=color, width=int(3 + (3 * pulse)))
+            self.card.config(highlightbackground=color)
+        except Exception: return
+        self.root.after(66, self.animate_avatar_glow)
+
+    def detect_xsessions(self):
+        xsessions_dir = "/data/data/com.termux/files/usr/share/xsessions"
+        found = {}
+        if os.path.exists(xsessions_dir):
+            for file in os.listdir(xsessions_dir):
+                if file.endswith(".desktop"):
+                    try:
+                        with open(os.path.join(xsessions_dir, file), "r") as f:
+                            name, exec_cmd = "", ""
+                            for line in f:
+                                if line.startswith("Name="): 
+                                    name = line.replace("Name=", "").strip()
+                                elif line.startswith("Exec="): 
+                                    exec_cmd = line.replace("Exec=", "").replace("%U", "").replace("%F", "").replace("%u", "").replace("%f", "").strip()
+                            if name and exec_cmd: found[name] = exec_cmd
+                    except Exception: pass
+        
+        if os.path.exists(CUSTOM_SESSIONS_PATH):
+            try:
+                with open(CUSTOM_SESSIONS_PATH, "r") as f:
+                    custom_sessions = json.load(f)
+                    for custom_name, custom_cmd in custom_sessions.items():
+                        found[custom_name] = custom_cmd
+            except Exception: pass
+
+        if not found:
+            found["KDE Plasma"] = "startplasma-x11"
+        return found
+
+    def launch_session(self):
+        try: 
+            selected_name = self.listbox.get(self.listbox.curselection()[0])
+        except Exception: 
+            selected_name = list(self.all_sessions.keys())[0]
+            
+        exec_string = self.all_sessions.get(selected_name, 'startplasma-x11')
+        display_var = os.environ.get("DISPLAY", ":1")
+        
+        os.makedirs(CONFIG_DIR, exist_ok=True)
+        with open(RUN_SCRIPT_PATH, "w") as f:
+            f.write("#!/bin/bash\n")
+            f.write(f"export DISPLAY={display_var}\n")
+            f.write(f"echo '--- TDM SESSION INITIALIZATION ---' > {LOG_PATH}\n")
+            f.write(f"echo 'Selected Environment: {selected_name}' >> {LOG_PATH}\n")
+            f.write(f"echo 'Original Command: {exec_string}' >> {LOG_PATH}\n")
+            f.write("pkill -f kwin 2>/dev/null\n")
+            f.write("pkill -f plasmashell 2>/dev/null\n")
+            f.write("pkill -f xfce4-session 2>/dev/null\n")
+            f.write(f"eval \"{exec_string}\" >> {LOG_PATH} 2>&1\n")
+            
+        os.chmod(RUN_SCRIPT_PATH, 0o755)
+        self.chosen_command = RUN_SCRIPT_PATH
+        
+        self.root.destroy()
+        self.root.quit()
+
+if __name__ == "__main__":
+    root = tk.Tk()
+    app = TermuxDM(root)
+    root.mainloop()
+    
+    if hasattr(app, 'chosen_command') and app.chosen_command:
+        os.system("clear")
+        print(f"[*] Executing master script: {app.chosen_command}")
+        print(f"[*] Check {LOG_PATH} if the desktop environment fails to start.")
+        os.system(app.chosen_command)
